@@ -40,19 +40,25 @@ int main() {
     std::future<cpp_redis::reply> rKeys = redisClient.keys("*");
     redisClient.sync_commit();
     rKeys.wait();
-    // These are both replies
-    auto resKeys = rKeys.get().as_array();
+    // get the reply as an array
+    const std::vector<cpp_redis::reply> resKeys = rKeys.get().as_array();
 
     std::vector<std::string> recipieVec(resKeys.size());
 
     // Map the responses into the cpp vector
-    std::transform(resTitles.begin(), resTitles.end(), recipieVec.begin(), [](const cpp_redis::reply &rep) {return rep.as_string(); });
+    std::transform(resKeys.begin(), resKeys.end(), recipieVec.begin(), [](const cpp_redis::reply &rep) {return rep.as_string(); });
+
+    // Get all of the field:value pairs for the keys
+
+    for(std::string recipieKey : recipieVec) {
+      
+    }
 
     // Convert into json
     std::vector<crow::json::wvalue> recipies;
     for (int i=0; i < titles.size(); i++) {
       recipies.push_back(crow::json::wvalue{
-        {"title", titles[i]},
+        {"title", recipieVec[i]},
         {"content", contents[i]}
       });
     }
@@ -61,7 +67,7 @@ int main() {
   });
 
   // Get a single recipe
-  CROW_ROUTE(app, "/api/recipies/<int>")
+  CROW_ROUTE(app, "/api/recipies/<string>")
   ([&](int recipeIndex){
 
     // Get the title of the recipe and the content
