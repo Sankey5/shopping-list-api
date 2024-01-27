@@ -3,6 +3,8 @@
 #include <set>
 #include <utility>
 #include <string>
+#include <sstream>
+#include <iomanip>
 
 #include "crow.h"
 #include "cpp_redis/core/client.hpp"
@@ -119,7 +121,9 @@ int main() {
         ingredientMeasurement = {ingredientItem[2].s()};
 
         //number check
-        std::string ingredientNumberString = std::to_string(ingredientNumber);
+        std::ostringstream oss;
+        oss << std::setprecision(2) << std::noshowpoint << ingredientNumber;
+        std::string ingredientNumberString = oss.str();
 
         // Is a true measure
         if(!isMeasure(ingredientMeasurement)) {
@@ -131,7 +135,6 @@ int main() {
         CROW_LOG_DEBUG << "Ingredient Amount: " << ingredientNumber;
         CROW_LOG_DEBUG << "Ingredient Amount (string version): " << ingredientNumberString;
         CROW_LOG_DEBUG << "Ingredient Measurement: " << ingredientMeasurement;
-
 
         // Queue data to the database
         try {
