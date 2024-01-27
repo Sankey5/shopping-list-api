@@ -1,16 +1,21 @@
 #include <iostream>
 #include <vector>
+#include <set>
 #include <utility>
 #include <string>
 
 #include "crow.h"
 #include "cpp_redis/core/client.hpp"
 
+bool isMeasure(std::string measureString);
+
 int main() {
   const std::string REDIS_IP_ADDR {"10.8.29.32"};
   const std::size_t REDIS_PORT {6379};
   //initialize
   crow::SimpleApp app;
+  // Set log level
+  app.loglevel(crow::LogLevel::Debug);
 
   //cpp_redis client
   cpp_redis::client redisClient;
@@ -30,20 +35,16 @@ int main() {
   ([&](){
 
     // Get the title of the recipes and their content
-    auto rTitles = redisClient.lrange("title", 0, -1);
-    auto rContent = redisClient.lrange("content", 0, -1);
+    std::future<cpp_redis::reply> rKeys = redisClient.keys("*");
     redisClient.sync_commit();
-    rTitles.wait();
-    rContent.wait();
+    rKeys.wait();
     // These are both replies
-    auto resTitles = rTitles.get().as_array();
-    auto resContent = rContent.get().as_array();
+    auto resKeys = rKeys.get().as_array();
 
-    std::vector<std::string> titles(resTitles.size()), contents(resContent.size());
+    std::vector<std::string> recipieVec(resKeys.size());
 
     // Map the responses into the cpp vector
-    std::transform(resTitles.begin(), resTitles.end(), titles.begin(), [](const cpp_redis::reply &rep) {return rep.as_string(); });
-    std::transform(resContent.begin(), resContent.end(), contents.begin(), [](const cpp_redis::reply &rep) {return rep.as_string(); });
+    std::transform(resTitles.begin(), resTitles.end(), recipieVec.begin(), [](const cpp_redis::reply &rep) {return rep.as_string(); });
 
     // Convert into json
     std::vector<crow::json::wvalue> recipies;
@@ -85,26 +86,82 @@ int main() {
   // Create a recipe
   CROW_ROUTE(app,"/api/recipies").methods(crow::HTTPMethod::POST)
   ([&](const crow::request &req) {
-    auto body = crow::json::load(req.body);
+    crow::json::rvalue body = crow::json::load(req.body);
+    CROW_LOG_DEBUG << "Got the body";
     if(!body)
       return crow::response(400, "Invalid body");
 
-    std::string title, content;
+    std::string mealName;
+    std::vector<crow::json::rvalue> ingredientList;
 
     // Get the title and the body of the response
     try {
-      title = body["title"].s(); // Get the string form of the title
-      content = body["content"].s(); // Get the string form of the body of the response
-    } catch (const std::runtime_error &err) {
-      return crow::response(400, "Invalid body");
-    }
+      mealName = body["mealName"].s(); // Get the string form of the title
+      CROW_LOG_DEBUG << "Meal name: " << mealName;
 
-    // Send the data to the database
-    try {
-      //redisClient.lpush(""); // Add 
-      //redisClient.sync_commit(); // Push the changes made to the database
+      // Get the list
+      // Need to separate ingredientListBody from ingredientList, because, you can't chain functions for constant values?
+      const crow::json::rvalue ingredientList = body["ingredientsList"];
+      CROW_LOG_DEBUG << "Ingredient list body type: "<< crow::json::get_type_str(ingredientList.t());
+
+      std::string ingredientName, ingredientNumberString, ingredientMeasurement;
+      double ingredientNumber;
+
+      // Get the ingredient list
+      for(crow::json::rvalue *i = ingredientList.begin(); i != ingredientList.end(); i++) {
+        std::vector<crow::json::rvalue> ingredientItem = (*i).lo(); // Get vector of ingredients
+        //CROW_LOG_DEBUG << "Ingredient list type: " << crow::json::get_type_str(ingredientItem);
+
+
+        // Assign values to variables
+        ingredientName = {ingredientItem[0].s()};
+        ingredientNumber = {ingredientItem[1].d()};
+        ingredientMeasurement = {ingredientItem[2].s()};
+
+        //number check
+        std::string ingredientNumberString = std::to_string(ingredientNumber);
+
+        // Is a true measure
+        if(!isMeasure(ingredientMeasurement)) {
+          CROW_LOG_DEBUG << "Invalid Measurement " << ingredientMeasurement << " at index: " << i - ingredientList.begin();
+          return crow::response(400, "Invalid Ingredient Measure ");
+        }
+
+        CROW_LOG_DEBUG << "Ingredient Name: " << ingredientName;
+        CROW_LOG_DEBUG << "Ingredient Amount: " << ingredientNumber;
+        CROW_LOG_DEBUG << "Ingredient Amount (string version): " << ingredientNumberString;
+        CROW_LOG_DEBUG << "Ingredient Measurement: " << ingredientMeasurement;
+
+
+        // Queue data to the database
+        try {
+          redisClient.hsetnx(mealName, ingredientName, ingredientNumberString + ingredientMeasurement, [](cpp_redis::reply &reply) {
+            if (!reply.is_integer()) {
+              throw std::runtime_error("Redis did not return a number");
+            }
+            
+            CROW_LOG_DEBUG << "Ingredient in Redis: " << reply;
+          });
+
+          redisClient.sync_commit();
+
+        } catch (const std::runtime_error &err) {
+          return crow::response(500, "Internal Server Error");
+        }
+      }
+
+      // Sync data to the database
+      try {
+
+          redisClient.sync_commit();
+
+        } catch (const std::runtime_error &err) {
+          return crow::response(500, "Internal Server Error");
+        }
+      
     } catch (const std::runtime_error &err) {
-      return crow::response(500, "Internal Server Error");
+      CROW_LOG_DEBUG << "Failure: " << err.what();
+      return crow::response(400, "Invalid body");
     }
 
     return crow::response(200, "Recipe added!");
@@ -138,4 +195,10 @@ int main() {
   // });
 
   app.port(18080).multithreaded().run();
+}
+
+bool isMeasure(std::string measureString) {
+  std::set<std::string> measures = {"lbs", "oz", "cup", "tbps", "tsp"};
+
+  return measures.count(measureString) ? true : false;
 }
