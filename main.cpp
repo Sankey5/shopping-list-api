@@ -10,6 +10,7 @@
 #include "cpp_redis/core/client.hpp"
 
 bool isMeasure(std::string measureString);
+void replaceChar(std::string &inputString, const char &searchChar, const char &replacementChar);
 
 int main() {
   const std::string REDIS_IP_ADDR {"10.8.29.32"};
@@ -43,42 +44,46 @@ int main() {
     // get the reply as an array
     const std::vector<cpp_redis::reply> resKeys = rKeys.get().as_array();
 
-    std::vector<std::string> recipieVec(resKeys.size());
+    std::vector<std::string> recipieNameVec(resKeys.size());
 
-    // Map the responses into the cpp vector
-    std::transform(resKeys.begin(), resKeys.end(), recipieVec.begin(), [](const cpp_redis::reply &rep) {return rep.as_string(); });
+    // Get list of keys
+    std::transform(resKeys.begin(), resKeys.end(), recipieNameVec.begin(), [](const cpp_redis::reply &rep) {return rep.as_string(); });
 
-    // Get all of the field:value pairs for the keys
+    // Create a list of recipie objects
+    std::vector<crow::json::wvalue> recipieObjects {};
+    for(std::string recipieKey : recipieNameVec) {
+      // Get the ingredients from the db
+      redisClient.hgetall(recipieKey, [](const cpp_redis::reply &rep) {
 
-    for(std::string recipieKey : recipieVec) {
-      
+      });
+
+      crow::json::wvalue recipie {
+        {"mealName", }
+      };
     }
 
     // Convert into json
-    std::vector<crow::json::wvalue> recipies;
-    for (int i=0; i < titles.size(); i++) {
-      recipies.push_back(crow::json::wvalue{
-        {"title", recipieVec[i]},
-        {"content", contents[i]}
-      });
-    }
+    // std::vector<crow::json::wvalue> recipies;
+    // for (int i=0; i < titles.size(); i++) {
+    //   recipies.push_back(crow::json::wvalue{
+    //     {"title", recipieNameVec[i]},
+    //     {"content", contents[i]}
+    //   });
+    // }
 
     return crow::json::wvalue{{"data", recipies}};
   });
 
   // Get a single recipe
   CROW_ROUTE(app, "/api/recipies/<string>")
-  ([&](int recipeIndex){
-
-    // Get the title of the recipe and the content
-    auto rTitle = redisClient.lindex("title", recipeIndex);
-    auto rContent = redisClient.lindex("content", recipeIndex);
+  ([&](std::string recipeName){
+    
+    // Get the recipe and the content
+    std::future<cpp_redis::reply> rKeys = redisClient.hgetall("recipeName");
     redisClient.sync_commit();
-    rTitle.wait();
-    rContent.wait();
+    rKeys.wait();
     // These are both replies
-    auto resTitles = rTitle.get().as_string();
-    auto resContent = rContent.get().as_string();
+    std::vector<std::> resTitles = rKeys.get().as_array();
 
     // Convert into json
     crow::json::wvalue recipe{
@@ -105,6 +110,7 @@ int main() {
     // Get the title and the body of the response
     try {
       mealName = body["mealName"].s(); // Get the string form of the title
+      //replaceChar(body["mealName"].s(), " ", "-"); // Remove the whitespace from it
       CROW_LOG_DEBUG << "Meal name: " << mealName;
 
       // Get the list
@@ -126,12 +132,12 @@ int main() {
         ingredientNumber = {ingredientItem[1].d()};
         ingredientMeasurement = {ingredientItem[2].s()};
 
-        //number check
+        //convert double to string
         std::ostringstream oss;
         oss << std::setprecision(2) << std::noshowpoint << ingredientNumber;
         std::string ingredientNumberString = oss.str();
 
-        // Is a true measure
+        // Test if the measure is an expected measure
         if(!isMeasure(ingredientMeasurement)) {
           CROW_LOG_DEBUG << "Invalid Measurement " << ingredientMeasurement << " at index: " << i - ingredientList.begin();
           return crow::response(400, "Invalid Ingredient Measure ");
@@ -148,8 +154,10 @@ int main() {
             if (!reply.is_integer()) {
               throw std::runtime_error("Redis did not return a number");
             }
+            if (reply) {
+              CROW_LOG_DEBUG << "Ingredient " << ingredientName << "add to " << mealName;
+            }
             
-            CROW_LOG_DEBUG << "Ingredient in Redis: " << reply;
           });
 
           redisClient.sync_commit();
@@ -211,3 +219,14 @@ bool isMeasure(std::string measureString) {
 
   return measures.count(measureString) ? true : false;
 }
+
+// void replaceChar(std::string &inputString, const char &searchChar, const char &replacementChar) {
+  
+//   for(auto i = inputString.begin(); i < inputString.end(); i++) {
+//     if(*i == searchChar)
+//       inputString.replace((i-inputString.begin()), 1, "-");
+//     }
+//   }
+  
+//   return inputString;
+// }
