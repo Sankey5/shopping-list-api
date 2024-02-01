@@ -11,6 +11,7 @@
 
 bool isMeasure(std::string measureString);
 void replaceChar(std::string &inputString, const char &searchChar, const char &replacementChar);
+std::pair<std::string, std::string> splitMeasure(std::string &valueMeasure);
 
 int main() {
   const std::string REDIS_IP_ADDR {"10.8.29.32"};
@@ -49,50 +50,69 @@ int main() {
     // Get list of keys
     std::transform(resKeys.begin(), resKeys.end(), recipieNameVec.begin(), [](const cpp_redis::reply &rep) {return rep.as_string(); });
 
-    // Create a list of recipie objects
-    std::vector<crow::json::wvalue> recipieObjects {};
+    // Loop through the recipie keys to make async requests to the database
+    std::vector<std::pair<std::string, std::future<cpp_redis::reply>>> recipieRequestObjects {};
     for(std::string recipieKey : recipieNameVec) {
       // Get the ingredients from the db
-      redisClient.hgetall(recipieKey, [](const cpp_redis::reply &rep) {
-
-      });
-
-      crow::json::wvalue recipie {
-        {"mealName", }
-      };
+      recipieRequestObjects.push_back(std::pair{recipieKey, redisClient.hgetall(recipieKey)});
     }
 
-    // Convert into json
-    // std::vector<crow::json::wvalue> recipies;
-    // for (int i=0; i < titles.size(); i++) {
-    //   recipies.push_back(crow::json::wvalue{
-    //     {"title", recipieNameVec[i]},
-    //     {"content", contents[i]}
-    //   });
-    // }
+    redisClient.sync_commit();
 
-    return crow::json::wvalue{{"data", recipies}};
+    // Go through the db replies and make a json object out of it to return
+    std::vector<crow::json::wvalue> recipies;
+    for(auto currRecipe = recipieRequestObjects.begin(); currRecipe != recipieRequestObjects.end(); currRecipe++) {
+      // Wait for the future object to be received
+      (*currRecipe).second.wait();
+      // Get the array contents
+      std::vector<cpp_redis::reply> rIngredients = (*currRecipe).second.as_array();
+      std::vector<crow::json::wvalue> wIngredients {};
+
+      for(int i = 0; i < rIngredients.size(); i += 2) {
+        if(i >= rIngredients.size())
+          break;
+
+        if(!rIngredients[i].is_string() || !rIngredients[i+1].is_string())
+          return crow::response(500, "Internal Server Error");
+
+        const std::string ingredientName = rIngredients[i].as_string();
+        // Split the 
+        const std::pair<std::string, std::string> ingredientValue = splitMeasure(rIngredients[i+1].as_string());
+        
+        wIngredients.push_back(crow::json::wvalue {
+          {"ingredientName", ingredientName, "ingredientNumber", ingredientValue.first, "ingredientMeasurement", ingredientValue.second};
+        });
+
+      }
+
+        // Add the recipie to the list of recipies
+        recipies.push_back(crow::json::wvalue{
+          (*currRecipe).first, wIngredients
+        });
+    }
+
+    return crow::response(200, crow::json::wvalue{{"data", recipies}});
   });
 
   // Get a single recipe
-  CROW_ROUTE(app, "/api/recipies/<string>")
-  ([&](std::string recipeName){
+  // CROW_ROUTE(app, "/api/recipies/<string>")
+  // ([&](std::string recipeName){
     
-    // Get the recipe and the content
-    std::future<cpp_redis::reply> rKeys = redisClient.hgetall("recipeName");
-    redisClient.sync_commit();
-    rKeys.wait();
-    // These are both replies
-    std::vector<std::> resTitles = rKeys.get().as_array();
+  //   // Get the recipe and the content
+  //   std::future<cpp_redis::reply> rKeys = redisClient.hgetall("recipeName");
+  //   redisClient.sync_commit();
+  //   rKeys.wait();
+  //   // These are both replies
+  //   std::vector<cpp_redis::reply> resTitles = rKeys.get().as_array();
 
-    // Convert into json
-    crow::json::wvalue recipe{
-      {"title", resTitles},
-      {"content", resContent}
-    };
+  //   // Convert into json
+  //   crow::json::wvalue recipe{
+  //     {"title", resTitles},
+  //     {"content", resContent}
+  //   };
 
-    return crow::json::wvalue{{"data", recipe}};
-  });
+  //   return crow::json::wvalue{{"data", recipe}};
+  // });
 
   // ---------- CREATE SECTION ----------
 
@@ -150,7 +170,7 @@ int main() {
 
         // Queue data to the database
         try {
-          redisClient.hsetnx(mealName, ingredientName, ingredientNumberString + ingredientMeasurement, [](cpp_redis::reply &reply) {
+          redisClient.hsetnx(mealName, ingredientName, ingredientNumberString + ingredientMeasurement, [&](cpp_redis::reply &reply) {
             if (!reply.is_integer()) {
               throw std::runtime_error("Redis did not return a number");
             }
@@ -212,6 +232,33 @@ int main() {
   // });
 
   app.port(18080).multithreaded().run();
+}
+
+std::pair<std::string, std::string> splitMeasure(std::string &valueMeasure) {
+  std::string ret = valueMeasure;
+  
+  if(valueMeasure.substr(valueMeasure.size()-2, 2) == "oz") {
+    ret.resize(valueMeasure.size()-2);
+    return std::make_pair(ret, "oz");
+  }
+  else if (valueMeasure.substr(valueMeasure.size()-3, 3) == "lbs") {
+    ret.resize(valueMeasure.size()-3);
+    return std::make_pair(ret, "lbs");
+  }
+  else if (valueMeasure.substr(valueMeasure.size()-3, 3) == "cup") {
+    ret.resize(valueMeasure.size()-3);
+    return std::make_pair(ret, "cup");
+  }
+  else if (valueMeasure.substr(valueMeasure.size()-3, 3) == "tsp") {
+    ret.resize(valueMeasure.size()-3);
+    return std::make_pair(ret, "tsp");
+  }
+  else if (valueMeasure.substr(valueMeasure.size()-4, 4) == "tbps") {
+    ret.resize(valueMeasure.size()-4);
+    return std::make_pair(ret, "tbps");
+  }
+
+  return {};
 }
 
 bool isMeasure(std::string measureString) {
