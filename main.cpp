@@ -11,7 +11,7 @@
 
 bool isMeasure(std::string measureString);
 void replaceChar(std::string &inputString, const char &searchChar, const char &replacementChar);
-std::pair<std::string, std::string> splitMeasure(std::string &valueMeasure);
+std::pair<std::string, std::string> splitMeasure(const std::string &valueMeasure);
 
 int main() {
   const std::string REDIS_IP_ADDR {"10.8.29.32"};
@@ -52,22 +52,29 @@ int main() {
 
     // Loop through the recipie keys to make async requests to the database
     std::vector<std::pair<std::string, std::future<cpp_redis::reply>>> recipieRequestObjects {};
-    for(std::string recipieKey : recipieNameVec) {
-      // Get the ingredients from the db
-      recipieRequestObjects.push_back(std::pair{recipieKey, redisClient.hgetall(recipieKey)});
-    }
+    try {
+      for(std::string recipieKey : recipieNameVec) {
+        // Get the ingredients from the db
+        recipieRequestObjects.push_back(std::pair{recipieKey, redisClient.hgetall(recipieKey)});
+      }
 
-    redisClient.sync_commit();
+      redisClient.commit();
+    } catch (const std::runtime_error &err) {
+        return crow::response(500, "Internal Server Error");
+    }
+    
 
     // Go through the db replies and make a json object out of it to return
     std::vector<crow::json::wvalue> recipies;
+
     for(auto currRecipe = recipieRequestObjects.begin(); currRecipe != recipieRequestObjects.end(); currRecipe++) {
       // Wait for the future object to be received
       (*currRecipe).second.wait();
-      // Get the array contents
-      std::vector<cpp_redis::reply> rIngredients = (*currRecipe).second.as_array();
-      std::vector<crow::json::wvalue> wIngredients {};
+      // Get the array contents from the future object
+      std::vector<cpp_redis::reply> rIngredients = (*currRecipe).second.get().as_array();
+      std::vector<crow::json::wvalue> wIngredients = {};
 
+      // Loop through the list of ingredients returned from the cpp redis call and add them to a JSON object
       for(int i = 0; i < rIngredients.size(); i += 2) {
         if(i >= rIngredients.size())
           break;
@@ -76,19 +83,25 @@ int main() {
           return crow::response(500, "Internal Server Error");
 
         const std::string ingredientName = rIngredients[i].as_string();
-        // Split the 
+        // Split the value from the measure
         const std::pair<std::string, std::string> ingredientValue = splitMeasure(rIngredients[i+1].as_string());
         
-        wIngredients.push_back(crow::json::wvalue {
-          {"ingredientName", ingredientName, "ingredientNumber", ingredientValue.first, "ingredientMeasurement", ingredientValue.second};
-        });
+        // Create the ingredient object
+        crow::json::wvalue ingredientObject {};
+        ingredientObject["ingredientName"] = ingredientName;
+        ingredientObject["ingredientNumber"] = ingredientValue.first;
+        ingredientObject["ingredientMeasurement"] = ingredientValue.second;
+
+        wIngredients.push_back(ingredientObject);
 
       }
 
-        // Add the recipie to the list of recipies
-        recipies.push_back(crow::json::wvalue{
-          (*currRecipe).first, wIngredients
-        });
+      // Give the name of the meal and add the ingredients list
+      crow::json::wvalue wRecipie {{"mealName", (*currRecipe).first}};
+      wRecipie["ingredientsList"] = crow::json::wvalue {wIngredients};
+
+      //Add the recipie to the list of recipies
+      recipies.push_back(wRecipie);
     }
 
     return crow::response(200, crow::json::wvalue{{"data", recipies}});
@@ -234,7 +247,7 @@ int main() {
   app.port(18080).multithreaded().run();
 }
 
-std::pair<std::string, std::string> splitMeasure(std::string &valueMeasure) {
+std::pair<std::string, std::string> splitMeasure(const std::string &valueMeasure) {
   std::string ret = valueMeasure;
   
   if(valueMeasure.substr(valueMeasure.size()-2, 2) == "oz") {
