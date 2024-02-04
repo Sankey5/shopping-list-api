@@ -10,6 +10,8 @@
 #include "crow/middlewares/cors.h"
 #include "cpp_redis/core/client.hpp"
 
+const std::string &CORS_ORIGIN_ALLOW = "brian-ubuntu-22-pc-q35-ich9-2009";
+
 bool isMeasure(std::string measureString);
 void replaceChar(std::string &inputString, const char &searchChar, const char &replacementChar);
 std::pair<std::string, std::string> splitMeasure(const std::string &valueMeasure);
@@ -18,15 +20,7 @@ int main() {
   const std::string REDIS_IP_ADDR {"10.8.29.32"};
   const std::size_t REDIS_PORT {6379};
   //initialize
-  crow::App<crow::CORSHandler> app;
-  // CORS
-  auto& cors = app.get_middleware<crow::CORSHandler>();
-
-  cors.global()
-    .methods("POST"_method, "GET"_method)
-    .origin("brian-ubuntu-22-pc-q35-ich9-2009");
-  // Set log level
-  app.loglevel(crow::LogLevel::Debug);
+  crow::SimpleApp app;
 
   //cpp_redis client
   cpp_redis::client redisClient;
@@ -38,11 +32,11 @@ int main() {
   ([]()
     {return "Working fine...";}
   );
-  
+
   // ---------- GET SECTION ----------
 
   // Get all recipies
-  CROW_ROUTE(app, "/api/recipies")
+  CROW_ROUTE(app, "/api/recipies").methods(crow::HTTPMethod::GET)
   ([&](){
 
     // Get the title of the recipes and their content
@@ -111,7 +105,9 @@ int main() {
       recipies.push_back(wRecipie);
     }
 
-    return crow::response(200, crow::json::wvalue{{"data", recipies}});
+    crow::response response(200, crow::json::wvalue{{"data", recipies}});
+    response.add_header("Access-Control-Allow-Origin", "*");
+    return response;
   });
 
   // Get a single recipe
@@ -221,7 +217,9 @@ int main() {
       return crow::response(400, "Invalid body");
     }
 
-    return crow::response(200, "Recipe added!");
+    crow::response response(200, "Recipe added!");
+    response.add_header("Access-Control-Allow-Origin", "*");
+    return response;
   });
 
   // ---------- DELETE SECTION ----------
