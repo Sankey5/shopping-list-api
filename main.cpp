@@ -7,6 +7,7 @@
 #include <iomanip>
 
 #include "crow.h"
+#include "crow/middlewares/cors.h"
 #include "cpp_redis/core/client.hpp"
 
 bool isMeasure(std::string measureString);
@@ -17,7 +18,13 @@ int main() {
   const std::string REDIS_IP_ADDR {"10.8.29.32"};
   const std::size_t REDIS_PORT {6379};
   //initialize
-  crow::SimpleApp app;
+  crow::App<crow::CORSHandler> app;
+  // CORS
+  auto& cors = app.get_middleware<crow::CORSHandler>();
+
+  cors.global()
+    .methods("POST"_method, "GET"_method)
+    .origin("brian-ubuntu-22-pc-q35-ich9-2009");
   // Set log level
   app.loglevel(crow::LogLevel::Debug);
 
