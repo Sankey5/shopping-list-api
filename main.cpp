@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <set>
 #include <utility>
@@ -10,21 +11,46 @@
 #include "crow/middlewares/cors.h"
 #include "cpp_redis/core/client.hpp"
 
-const std::string &CORS_ORIGIN_ALLOW = "brian-ubuntu-22-pc-q35-ich9-2009";
-
 bool isMeasure(std::string measureString);
 void replaceChar(std::string &inputString, const char &searchChar, const char &replacementChar);
 std::pair<std::string, std::string> splitMeasure(const std::string &valueMeasure);
 
 int main() {
-  const std::string REDIS_IP_ADDR {"10.8.29.32"};
-  const std::size_t REDIS_PORT {6379};
+  // initialize redis connection details
+  std::ifstream redisCredientialsFile;
+  redisCredientialsFile.open("../redisCredientials.txt", std::ios::in);
+
+  if(!redisCredientialsFile) {
+    std::cout << "Could not open credientials file" << std::endl;
+    return 1;
+  }
+  
+  std::string REDIS_IP_ADDR, USERNAME, PASSWORD;
+  std::size_t REDIS_PORT;
+
+  redisCredientialsFile >> REDIS_IP_ADDR;
+  redisCredientialsFile >> REDIS_PORT;
+  redisCredientialsFile >> PASSWORD;
+
+  std::cout << "IP: " << REDIS_IP_ADDR << std::endl;
+  std::cout << "Port: " << REDIS_PORT << std::endl;
+
+  redisCredientialsFile.close();
+
   //initialize
   crow::SimpleApp app;
+  app.loglevel(crow::LogLevel::Debug);
 
   //cpp_redis client
   cpp_redis::client redisClient;
   redisClient.connect(REDIS_IP_ADDR, REDIS_PORT, nullptr, 0, 0, 0);
+  // authenticate as user
+  std::future<cpp_redis::reply> authenticated = redisClient.auth(PASSWORD);
+  redisClient.sync_commit();
+  authenticated.wait();
+  
+  std::string authenticatedStatus = authenticated.get().as_string();
+  CROW_LOG_DEBUG << "Authenticated status: " << authenticatedStatus;
 
   // ---------- TESTING SECTION ----------
 
